@@ -14,6 +14,7 @@ RUN apt-get update \
        libsndfile1 \
        fluidsynth \
        fluid-soundfont-gm \
+       g++ \
   && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /app/requirements.txt
