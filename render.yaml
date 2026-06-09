@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: pocket-producer-render-worker
+    env: docker
+    dockerfilePath: scripts/worker_service/Dockerfile
+    plan: free
+    autoDeploy: false
