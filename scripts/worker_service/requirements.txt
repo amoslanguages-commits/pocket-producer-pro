@@ -7,3 +7,5 @@ scipy
 librosa
 pretty_midi
 mido
+pyworld
+pyloudnorm
