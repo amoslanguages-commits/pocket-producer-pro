@@ -3,3 +3,14 @@ uvicorn
 requests
 numpy
 soundfile
+scipy
+librosa
+pretty_midi
+mido
+essentia
+basic-pitch
+whisperx
+demucs
+torchcrepe
+madmom
+pyannote.audio
