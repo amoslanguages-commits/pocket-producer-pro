@@ -795,7 +795,7 @@ def build_confidence(payload: Dict[str, Any]) -> Dict[str, float]:
 
 def analyze(path: str, midi_output: str | None = None) -> Dict[str, Any]:
     source_path = separate_vocals(path) or path
-    y, sr = librosa.load(source_path, sr=48000, mono=True)
+    y, sr = librosa.load(source_path, sr=16000, mono=True)
 
     tempo = detect_tempo_and_beats(y, sr, audio_path=source_path)
     harmony = detect_key_and_chords(
