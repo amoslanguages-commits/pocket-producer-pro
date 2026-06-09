@@ -5,6 +5,5 @@ numpy
 soundfile
 scipy
 librosa
-essentia
 whisperx
 demucs
