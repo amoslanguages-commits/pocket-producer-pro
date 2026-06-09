@@ -957,7 +957,7 @@ def render(req: RenderRequest, request: Request) -> Dict[str, Any]:
     if cfg.worker_auth_token:
         incoming = request.headers.get("x-worker-auth", "").strip()
         if incoming != cfg.worker_auth_token:
-            raise HTTPException(status_code=401, detail="Unauthorized worker caller")
+            raise HTTPException(status_code=401, detail=f"Unauthorized worker caller: expected len={len(cfg.worker_auth_token)} prefix={cfg.worker_auth_token[:4]}... got len={len(incoming)} prefix={incoming[:4]}...")
 
     if req.mode != "render_worker":
         raise HTTPException(status_code=400, detail="Unsupported mode")
