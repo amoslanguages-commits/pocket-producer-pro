@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import requests
 import soundfile as sf
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
 SAMPLE_RATE = 48000
@@ -46,16 +46,25 @@ class RenderRequest(BaseModel):
     arrangement_plan: Dict[str, Any] = Field(default_factory=dict)
 
 
+class ProductionContracts(BaseModel):
+    arrangement: Dict[str, Any] = Field(default_factory=dict)
+    vocal_chain: Dict[str, Any] = Field(default_factory=dict)
+    mix_chain: Dict[str, Any] = Field(default_factory=dict)
+    mastering_chain: Dict[str, Any] = Field(default_factory=dict)
+
+
 @dataclass
 class WorkerConfig:
     upload_base_url: str
     upload_token: str
+    worker_auth_token: str
 
 
 def _worker_config() -> WorkerConfig:
     return WorkerConfig(
         upload_base_url=os.getenv("WORKER_UPLOAD_BASE_URL", "").strip(),
         upload_token=os.getenv("WORKER_UPLOAD_TOKEN", "").strip(),
+        worker_auth_token=os.getenv("WORKER_AUTH_TOKEN", "").strip(),
     )
 
 
@@ -116,7 +125,8 @@ def _render_stems(plan: Dict[str, Any], out_dir: Path, seed_key: str) -> Dict[st
     seed = int(hashlib.sha256(seed_key.encode("utf-8")).hexdigest()[:8], 16)
 
     kick = _tone(55.0, 0.09, 0.8)
-    snare = _noise(0.08, 0.35, seed=seed + 7) * np.linspace(1.0, 0.2, kick.size)
+    snare_noise = _noise(0.08, 0.35, seed=seed + 7)
+    snare = snare_noise * np.linspace(1.0, 0.2, snare_noise.size, dtype=np.float32)
     hat = _noise(0.03, 0.12, seed=seed + 17)
 
     for bar in range(bars):
@@ -125,11 +135,17 @@ def _render_stems(plan: Dict[str, Any], out_dir: Path, seed_key: str) -> Dict[st
             t0 = bar_start + beat * beat_sec
             i0 = _sec_to_samples(t0)
             if beat in (0, 2):
-                drums[i0 : i0 + len(kick)] += kick[: max(0, len(drums) - i0)]
+                avail = max(0, len(drums) - i0)
+                if avail > 0:
+                    drums[i0 : i0 + min(len(kick), avail)] += kick[: min(len(kick), avail)]
             if beat in (1, 3):
-                drums[i0 : i0 + len(snare)] += snare[: max(0, len(drums) - i0)]
+                avail = max(0, len(drums) - i0)
+                if avail > 0:
+                    drums[i0 : i0 + min(len(snare), avail)] += snare[: min(len(snare), avail)]
             ih = _sec_to_samples(t0 + beat_sec * 0.5)
-            drums[ih : ih + len(hat)] += hat[: max(0, len(drums) - ih)]
+            avail = max(0, len(drums) - ih)
+            if avail > 0:
+                drums[ih : ih + min(len(hat), avail)] += hat[: min(len(hat), avail)]
 
     key = str(plan.get("key", "C")).upper()
     root_table = {
@@ -201,8 +217,9 @@ def _render_stems(plan: Dict[str, Any], out_dir: Path, seed_key: str) -> Dict[st
 
 
 def _upload_file(path: Path, remote_path: str, cfg: WorkerConfig) -> str:
+    # Upload is required for mobile-consumable durable URLs.
     if not cfg.upload_base_url:
-        return f"file://{path.as_posix()}"
+        raise RuntimeError("WORKER_UPLOAD_BASE_URL is required for durable stem URLs")
 
     url = f"{cfg.upload_base_url.rstrip('/')}/{remote_path.lstrip('/')}"
     headers = {}
@@ -233,7 +250,12 @@ def _post_progress(req: RenderRequest, progress: int, step: str) -> None:
     )
 
 
-def _post_complete(req: RenderRequest, plan: Dict[str, Any], stem_urls: Dict[str, str]) -> None:
+def _post_complete(
+    req: RenderRequest,
+    plan: Dict[str, Any],
+    stem_urls: Dict[str, str],
+    contracts: ProductionContracts,
+) -> None:
     headers = {"Content-Type": "application/json"}
     if req.callback_secret:
         headers["x-worker-secret"] = req.callback_secret
@@ -259,6 +281,7 @@ def _post_complete(req: RenderRequest, plan: Dict[str, Any], stem_urls: Dict[str
         "current_step": "Ready",
         "analysis": req.analysis,
         "arrangement_plan": plan,
+        "production_contracts": contracts.model_dump(),
         "versions": [v.model_dump() for v in versions],
         "stems": [s.model_dump() for s in stems],
     }
@@ -275,11 +298,16 @@ def health() -> Dict[str, str]:
 
 
 @app.post("/render")
-def render(req: RenderRequest) -> Dict[str, Any]:
+def render(req: RenderRequest, request: Request) -> Dict[str, Any]:
+    cfg = _worker_config()
+    if cfg.worker_auth_token:
+        incoming = request.headers.get("x-worker-auth", "").strip()
+        if incoming != cfg.worker_auth_token:
+            raise HTTPException(status_code=401, detail="Unauthorized worker caller")
+
     if req.mode != "render_worker":
         raise HTTPException(status_code=400, detail="Unsupported mode")
 
-    cfg = _worker_config()
     plan = req.arrangement_plan or {
         "bpm": req.analysis.get("bpm", 90),
         "key": req.analysis.get("key", "C"),
@@ -287,6 +315,12 @@ def render(req: RenderRequest) -> Dict[str, Any]:
         "chord_progression": req.analysis.get("chord_progression", []),
         "genre": "Render Worker",
     }
+    contracts = ProductionContracts(
+        arrangement=plan,
+        vocal_chain=plan.get("vocal_chain", {}),
+        mix_chain=plan.get("mix_chain", {}),
+        mastering_chain=plan.get("mastering_chain", {}),
+    )
 
     try:
         _post_progress(req, 20, "Arranging stems")
@@ -301,7 +335,7 @@ def render(req: RenderRequest) -> Dict[str, Any]:
                 stem_urls[name] = _upload_file(p, remote, cfg)
 
             _post_progress(req, 92, "Finalizing song version")
-            _post_complete(req, plan, stem_urls)
+            _post_complete(req, plan, stem_urls, contracts)
 
         return {"ok": True, "job_id": req.job_id, "project_id": req.project_id, "stems": stem_urls}
     except Exception as e:
