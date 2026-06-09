@@ -3,5 +3,6 @@ services:
     name: pocket-producer-render-worker
     env: docker
     dockerfilePath: scripts/worker_service/Dockerfile
+    dockerContext: scripts/worker_service
     plan: free
     autoDeploy: false
