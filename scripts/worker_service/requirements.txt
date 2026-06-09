@@ -3,7 +3,3 @@ uvicorn
 requests
 numpy
 soundfile
-scipy
-librosa
-whisperx
-demucs
