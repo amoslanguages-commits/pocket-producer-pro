@@ -825,6 +825,8 @@ def analyze(path: str, midi_output: str | None = None) -> Dict[str, Any]:
         "scale": harmony["scale"],
         "tempo_map": tempo["tempo_map"],
         "downbeats": tempo["downbeats"],
+        "beat_times": tempo["beat_times"],
+        "duration": float(len(y)) / float(sr),
         "melody_contour": melody["melody_contour"],
         "f0_series": melody.get("f0_series", []),
         "chord_hint": harmony["chord_hint"],

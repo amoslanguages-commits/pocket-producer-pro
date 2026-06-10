@@ -585,7 +585,17 @@ def _render_midi_with_sample_service(
         return None
 
 
-def _render_stems(plan: Dict[str, Any], out_dir: Path, seed_key: str) -> Dict[str, Path]:
+def _render_stems(plan: Dict[str, Any], out_dir: Path, seed_key: str, analysis: Optional[Dict[str, Any]] = None) -> Dict[str, Path]:
+    """Wrapper: delegates to the studio-grade beat_synth engine."""
+    try:
+        from beat_synth import render_studio_beat  # type: ignore
+        return render_studio_beat(plan, analysis or {}, out_dir, seed_key=seed_key)
+    except Exception as e:
+        print(f"[render_worker] beat_synth failed ({e}), falling back to legacy synth")
+        return _render_stems_legacy(plan, out_dir, seed_key)
+
+
+def _render_stems_legacy(plan: Dict[str, Any], out_dir: Path, seed_key: str) -> Dict[str, Path]:
     bpm = float(plan.get("bpm", 90))
     length_sec = _section_duration_sec(plan)
     beat_sec = 60.0 / max(40.0, min(220.0, bpm))
@@ -1003,9 +1013,11 @@ def render(req: RenderRequest, request: Request) -> Dict[str, Any]:
                 midi_contract,
             )
 
-            # Always produce a deterministic baseline so every render target has
+            # Always produce a studio-grade baseline so every render target has
             # audio, then override with higher-fidelity engines where available.
-            stems = _render_stems(plan, out_dir, seed_key=f"{req.project_id}:{req.job_id}")
+            # Pass full analysis so beat is phase-locked to the vocal's actual downbeats
+            # and section timing.
+            stems = _render_stems(plan, out_dir, seed_key=f"{req.project_id}:{req.job_id}", analysis=req.analysis)
 
             midi_mix = td_path / "midi_mix.wav"
             rendered = _render_midi_with_fluidsynth(midi_path, midi_mix, cfg.sf2_path)
